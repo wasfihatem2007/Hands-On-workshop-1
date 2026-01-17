@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hands On - Clinical Skills Simulator</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div class="container">
+    <div class="sidebar">
+        <h2>Hands On 🩺</h2>
+        <p class="subtitle">Clinical Skills Workshop</p>
+        <hr>
+        
+        <div class="patient-list">
+            <h3>Select Patient</h3>
+            {% for id, p in personas.items() %}
+                <button onclick="selectPatient('{{ id }}', '{{ p.name }}')" class="patient-btn" id="btn-{{ id }}">
+                    {{ p.name }}
+                </button>
+            {% endfor %}
+        </div>
+
+        <div class="settings-area">
+            <h3>Settings</h3>
+            
+            <label class="setting-label">Language / اللغة</label>
+            <div class="lang-options">
+                <label>
+                    <input type="radio" name="language" value="English" checked onchange="updateSettings()"> 
+                    English
+                </label>
+                <label>
+                    <input type="radio" name="language" value="Arabic" onchange="updateSettings()"> 
+                    العربية
+                </label>
+            </div>
+
+            <label class="setting-label">Font Size</label>
+            <div class="font-controls">
+                <button onclick="changeFontSize(-2)">A-</button>
+                <span id="font-display">Normal</span>
+                <button onclick="changeFontSize(2)">A+</button>
+            </div>
+        </div>
+
+        <hr>
+
+        <div class="controls">
+            <button id="reset-btn" onclick="resetSession()" disabled>
+                ⚠️ End Session & Save Log
+            </button>
+        </div>
+    </div>
+
+    <div class="chat-area">
+        <div class="header">
+            <h3 id="current-patient-name">Select a patient to begin history taking...</h3>
+        </div>
+        
+        <div id="chat-box" class="messages">
+            </div>
+
+        <div class="input-area">
+            <input type="text" id="user-input" placeholder="Type your question here..." disabled>
+            <button onclick="sendMessage()" id="send-btn" disabled>Send</button>
+        </div>
+    </div>
+</div>
+
+<script src="/static/script.js"></script>
+</body>
+</html>

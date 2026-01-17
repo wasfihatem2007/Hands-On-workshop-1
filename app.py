@@ -1,0 +1,136 @@
+import os
+import datetime
+import google.generativeai as genai
+from flask import Flask, render_template, request, jsonify, session
+from dotenv import load_dotenv
+
+load_dotenv()
+
+app = Flask(__name__)
+app.secret_key = "super_secret_med_key" 
+
+MODEL_NAME = "gemini-flash-latest"
+
+PERSONAS = {
+    "1": {
+        "name": "Patient 1: Ahmed (Respiratory)",
+        "key_env_var": "PATIENT_1_KEY",
+        "instruction": """
+        You are Ahmed, a 59-year-old male construction worker. 
+        CHIEF COMPLAINT: Chronic cough and shortness of breath.
+        HISTORY: You have smoked 1 pack a day for 40 years.
+        PERSONALITY: Stubborn, hates doctors.
+        """
+    },
+    "2": {
+        "name": "Patient 2: Sarah (Gastrointestinal)",
+        "key_env_var": "PATIENT_2_KEY",
+        "instruction": """
+        You are Sarah, a 24-year-old medical student.
+        CHIEF COMPLAINT: Sharp pain in lower right abdomen (Appendicitis).
+        PERSONALITY: Anxious, speaks in medical terms nervously.
+        """
+    },
+    "3": {
+        "name": "Patient 3: Mr. Thompson (Cardio/Geriatric)",
+        "key_env_var": "PATIENT_3_KEY",
+        "instruction": """
+        You are Mr. Thompson, a 78-year-old retired teacher.
+        CHIEF COMPLAINT: Dizzy spell, fainted in garden.
+        HISTORY: Forgot BP meds for 3 days.
+        PERSONALITY: Polite, talkative, distractible.
+        """
+    }
+}
+
+chat_histories = {}
+
+@app.route('/')
+def index():
+    return render_template('index.html', personas=PERSONAS)
+
+@app.route('/chat', methods=['POST'])
+def chat():
+    data = request.json
+    user_msg = data.get('message')
+    patient_id = data.get('patient_id')
+    selected_language = data.get('language', 'English') # Default to English
+    
+    user_session_id = session.get('session_id', str(os.urandom(16).hex()))
+    session['session_id'] = user_session_id
+    
+    if patient_id not in PERSONAS:
+        return jsonify({"error": "Invalid Patient ID"}), 400
+    env_var_name = PERSONAS[patient_id]['key_env_var']
+    specific_api_key = os.getenv(env_var_name)
+    if not specific_api_key:
+        return jsonify({"error": f"API Key for Patient {patient_id} not found."}), 500
+    genai.configure(api_key=specific_api_key)
+
+    key = f"{user_session_id}_{patient_id}"
+    
+    if key not in chat_histories:
+        chat_histories[key] = [
+            {"role": "user", "parts": [PERSONAS[patient_id]['instruction']]},
+            {"role": "model", "parts": ["(Internal: Ready.)"]}
+        ]
+        session[f'lang_{key}'] = 'English'
+
+    last_lang = session.get(f'lang_{key}', 'English')
+    if selected_language != last_lang:
+        switch_instruction = f"(System Command: The user has switched the language to {selected_language}. Please respond in {selected_language} from now on, but keep your persona character.)"
+        chat_histories[key].append({"role": "user", "parts": [switch_instruction]})
+        chat_histories[key].append({"role": "model", "parts": [f"(Understood. Switching to {selected_language}.)"]})
+        session[f'lang_{key}'] = selected_language
+
+    history = chat_histories[key]
+    
+    try:
+        model = genai.GenerativeModel(MODEL_NAME)
+        chat_session = model.start_chat(history=history)
+        response = chat_session.send_message(user_msg)
+        
+        ai_text = response.text
+        
+        chat_histories[key].append({"role": "user", "parts": [user_msg]})
+        chat_histories[key].append({"role": "model", "parts": [ai_text]})
+        
+        return jsonify({"response": ai_text})
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/reset', methods=['POST'])
+def reset():
+    data = request.json
+    patient_id = data.get('patient_id')
+    user_session_id = session.get('session_id')
+    key = f"{user_session_id}_{patient_id}"
+    
+    if key in chat_histories:
+        history = chat_histories[key]
+        
+        if not os.path.exists('logs'):
+            os.makedirs('logs')
+            
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"logs/Log_Patient{patient_id}_{timestamp}.txt"
+        
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(f"SESSION LOG - HANDS ON PROJECT\n")
+            f.write(f"Patient: {PERSONAS[patient_id]['name']}\n")
+            f.write(f"Timestamp: {timestamp}\n")
+            f.write("-" * 30 + "\n")
+            for entry in history:
+                role = "Student" if entry['role'] == "user" else "Patient AI"
+                text = entry['parts'][0]
+                if "You are Ahmed" in text or "You are Sarah" in text: continue 
+                f.write(f"{role}: {text}\n")
+        
+        del chat_histories[key]
+        return jsonify({"status": "success", "message": "Session reset and log saved."})
+    
+    return jsonify({"status": "error", "message": "No active session found."})
+
+if __name__ == '__main__':
+    app.run(debug=True)

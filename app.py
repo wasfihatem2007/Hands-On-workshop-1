@@ -1,5 +1,8 @@
 import os
 import datetime
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import google.generativeai as genai
 from flask import Flask, render_template, request, jsonify, session
 from dotenv import load_dotenv
@@ -7,9 +10,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 app = Flask(__name__)
-app.secret_key = "super_secret_med_key" 
+app.secret_key = "super_secret_med_key"
 
 MODEL_NAME = "gemini-flash-latest"
+
+SENDER_EMAIL = os.environ.get("MAIL_USERNAME")
+SENDER_PASSWORD = os.environ.get("MAIL_PASSWORD")
+MODERATOR_EMAIL = os.environ.get("MODERATOR_EMAIL")
 
 TRAINING_GUIDELINES = """
 *** CRITICAL SIMULATION RULES ***
@@ -18,7 +25,7 @@ TRAINING_GUIDELINES = """
 3. RAPPORT CHECK: 
    - Start the conversation slightly guarded/cold.
    - If the student DOES NOT introduce themselves or asks for your name too late, remain cold and give short answers.
-   - If the student uses empathetic statements (e.g., "I'm sorry to hear that", "That must be hard"), become "talkative" and open up more.
+   - If the student uses empathetic statements (e.g., "I'm sorry to hear that"), become "talkative" and open up more.
 """
 
 PERSONAS = {
@@ -62,6 +69,30 @@ PERSONAS = {
 
 chat_histories = {}
 
+def send_email_log(patient_name, log_content):
+    """Sends the session log to the moderator via email."""
+    if not SENDER_EMAIL or not SENDER_PASSWORD:
+        print("Email credentials missing. Log not sent.")
+        return
+
+    try:
+        msg = MIMEMultipart()
+        msg['From'] = SENDER_EMAIL
+        msg['To'] = MODERATOR_EMAIL
+        msg['Subject'] = f"Hands On Log - {patient_name} - {datetime.datetime.now().strftime('%H:%M')}"
+
+        msg.attach(MIMEText(log_content, 'plain'))
+
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(SENDER_EMAIL, SENDER_PASSWORD)
+        text = msg.as_string()
+        server.sendmail(SENDER_EMAIL, MODERATOR_EMAIL, text)
+        server.quit()
+        print("Email sent successfully!")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+
 @app.route('/')
 def index():
     return render_template('index.html', personas=PERSONAS)
@@ -81,11 +112,11 @@ def chat():
     env_var_name = PERSONAS[patient_id]['key_env_var']
     specific_api_key = os.getenv(env_var_name)
     if not specific_api_key:
-        return jsonify({"error": f"API Key for Patient {patient_id} not found."}), 500
+        return jsonify({"error": f"API Key for Patient {patient_id} not found on server."}), 500
+
     genai.configure(api_key=specific_api_key)
 
     key = f"{user_session_id}_{patient_id}"
-    
     if key not in chat_histories:
         chat_histories[key] = [
             {"role": "user", "parts": [PERSONAS[patient_id]['instruction']]},
@@ -127,25 +158,24 @@ def reset():
     if key in chat_histories:
         history = chat_histories[key]
         
-        if not os.path.exists('logs'):
-            os.makedirs('logs')
-            
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"logs/Log_Patient{patient_id}_{timestamp}.txt"
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        patient_name = PERSONAS[patient_id]['name']
         
-        with open(filename, "w", encoding="utf-8") as f:
-            f.write(f"SESSION LOG - HANDS ON PROJECT\n")
-            f.write(f"Patient: {PERSONAS[patient_id]['name']}\n")
-            f.write(f"Timestamp: {timestamp}\n")
-            f.write("-" * 30 + "\n")
-            for entry in history:
-                role = "Student" if entry['role'] == "user" else "Patient AI"
-                text = entry['parts'][0]
-                if "You are Ahmed" in text or "TRAINING_GUIDELINES" in text: continue 
-                f.write(f"{role}: {text}\n")
+        log_content = f"SESSION LOG - HANDS ON PROJECT\n"
+        log_content += f"Patient: {patient_name}\n"
+        log_content += f"Time: {timestamp}\n"
+        log_content += "-" * 30 + "\n"
+        
+        for entry in history:
+            role = "Student" if entry['role'] == "user" else "Patient AI"
+            text = entry['parts'][0]
+            if "You are" in text or "TRAINING_GUIDELINES" in text or "System Command" in text: continue 
+            log_content += f"{role}: {text}\n"
+        
+        send_email_log(patient_name, log_content)
         
         del chat_histories[key]
-        return jsonify({"status": "success", "message": "Session reset and log saved."})
+        return jsonify({"status": "success", "message": "Session reset and log sent to moderator."})
     
     return jsonify({"status": "error", "message": "No active session found."})
 
